@@ -1,0 +1,1653 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Full Pipeline Stepper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  /* Layout: a debugger window. Sticky transport bar with the token tape; StatementEvaluator source on the left,
+     machine state (what happened, stacks, helper call, variables) on the right. */
+  --bg: #f0f6f2;
+  --panel: #ffffff;
+  --code-bg: #f5faf7;
+  --ink: #12261a;
+  --muted: #52695a;
+  --line: #d2e2d8;
+  --accent: #1e7a4c;
+  --accent-soft: #dcf1e4;
+  --on-accent: #ffffff;
+  --apply: #667d0c;
+  --apply-soft: #eef4d3;
+  --error: #c42b2b;
+  --error-soft: #fdeaea;
+  --ctx: #e6f0e9;
+  --kw: #0e6b4d;
+  --str: #5d7a14;
+  --const: #0b7a75;
+  --type: #1f6f3a;
+  --num: #8a6d0c;
+  --gutter: #8aa392;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-code: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1612; --panel: #15201a; --code-bg: #111b16; --ink: #e3efe7; --muted: #93aa9b; --line: #25362c;
+    --accent: #5fd391; --accent-soft: #1a3326; --on-accent: #07130c;
+    --apply: #c4d86a; --apply-soft: #2c3314; --error: #ff8a8a; --error-soft: #3a1d21; --ctx: #1a261f;
+    --kw: #7fe0b4; --str: #c4d86a; --const: #6fd9d0; --type: #8fd89f; --num: #e0c76a; --gutter: #5b7364;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1612; --panel: #15201a; --code-bg: #111b16; --ink: #e3efe7; --muted: #93aa9b; --line: #25362c;
+  --accent: #5fd391; --accent-soft: #1a3326; --on-accent: #07130c;
+  --apply: #c4d86a; --apply-soft: #2c3314; --error: #ff8a8a; --error-soft: #3a1d21; --ctx: #1a261f;
+  --kw: #7fe0b4; --str: #c4d86a; --const: #6fd9d0; --type: #8fd89f; --num: #e0c76a; --gutter: #5b7364;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.5; }
+button, select, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--font-code); }
+
+.wrap { max-width: 1320px; margin: 0 auto; padding-inline: clamp(16px, 3vw, 28px); padding-block: 28px 56px; }
+
+/* ---------- intro + setup ---------- */
+.intro { display: grid; gap: 6px; max-width: 70ch; margin-bottom: 20px; }
+.eyebrow { margin: 0; font-family: var(--font-code); font-size: 12.5px; color: var(--accent); letter-spacing: .02em; }
+h1 { margin: 0; font-size: clamp(24px, 3.2vw, 32px); line-height: 1.15; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+.lede { margin: 0; color: var(--muted); }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px 0; }
+.label, .card h2, .stack-col h3 { margin: 0; font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); }
+.hint { font-size: 12.5px; color: var(--muted); }
+
+.setup { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; padding: 16px; margin-bottom: 16px; }
+.editor { display: grid; gap: 8px; min-width: 0; }
+.editor-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+textarea#program { width: 100%; min-height: 128px; resize: vertical; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--code-bg); font-family: var(--font-code); font-size: 14px; line-height: 1.6; }
+select { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.lines { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.lines ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.line-btn { width: 100%; display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; }
+.line-btn:hover { background: var(--ctx); }
+.line-btn .no { font-family: var(--font-code); font-size: 12px; color: var(--gutter); }
+.line-btn code { font-size: 13.5px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.line-btn .status { font-size: 11.5px; color: var(--muted); }
+.line-btn.is-current { border-color: var(--accent); background: var(--accent-soft); }
+.line-btn.is-current .status { color: var(--accent); font-weight: 600; }
+.line-btn.is-error .status { color: var(--error); font-weight: 600; }
+.line-btn:disabled { cursor: default; opacity: .55; }
+.line-btn:disabled:hover { background: transparent; }
+
+/* ---------- transport (sticky) ---------- */
+.transport { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg);
+  padding-block: 10px; margin-bottom: 14px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); cursor: pointer; font-weight: 500; font-size: 14px; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+#scrub { flex: 1 1 160px; min-width: 120px; accent-color: var(--accent); }
+.counter { font-family: var(--font-code); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tape-row { display: flex; gap: 12px; align-items: stretch; min-width: 0; }
+.pills { display: grid; gap: 4px; flex: 0 0 auto; }
+.pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; background: var(--panel); }
+.pill b { font-family: var(--font-code); font-weight: 500; }
+.pill.is-on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.tape { display: flex; gap: 6px; overflow-x: auto; min-width: 0; flex: 1; padding-bottom: 2px; align-items: stretch; }
+.tok { flex: 0 0 auto; display: grid; justify-items: center; align-content: center; gap: 1px; min-width: 44px; padding: 4px 8px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
+.tok .t { font-family: var(--font-code); font-size: 16px; font-weight: 600; line-height: 1.2; }
+.tok .k { font-family: var(--font-code); font-size: 9.5px; letter-spacing: .04em; color: var(--muted); }
+.tok.done { opacity: .45; }
+.tok.now { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.tok.now .k { color: var(--on-accent); opacity: .85; }
+.tok.bad { border-color: var(--error); background: var(--error-soft); }
+.raw-line { font-family: var(--font-code); padding: 6px 10px; border-radius: 8px; background: var(--error-soft); color: var(--error); }
+
+/* ---------- workspace ---------- */
+.workspace { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.col { display: grid; gap: 16px; min-width: 0; }
+
+.code { font-family: var(--font-code); font-size: 12.5px; line-height: 1.6; padding: 10px 0 12px; overflow-x: auto; background: var(--code-bg);
+  border-radius: 0 0 var(--radius) var(--radius); margin-top: 10px; border-top: 1px solid var(--line); }
+.ln { display: grid; grid-template-columns: 3.2em 1.6em max-content; align-items: baseline; min-width: 100%; width: max-content; padding-right: 16px; border-left: 3px solid transparent; }
+.ln .n { text-align: right; color: var(--gutter); padding-right: 4px; user-select: none; font-variant-numeric: tabular-nums; }
+.ln .m { color: var(--accent); text-align: center; user-select: none; }
+.ln .s { white-space: pre; }
+.ln.is-ctx { background: var(--ctx); }
+.ln.is-focus { background: var(--accent-soft); border-left-color: var(--accent); }
+.ln.is-focus .n { color: var(--accent); font-weight: 600; }
+.ln.is-error { background: var(--error-soft); border-left-color: var(--error); }
+.ln.is-error .m, .ln.is-error .n { color: var(--error); }
+.ln[data-note]::after { content: attr(data-note); margin-left: 14px; font-family: var(--font-ui); font-size: 11.5px; font-weight: 600;
+  color: var(--apply); white-space: nowrap; }
+.ln.gap .s { color: var(--gutter); }
+.tk-kw { color: var(--kw); } .tk-str { color: var(--str); } .tk-const { color: var(--const); }
+.tk-type { color: var(--type); } .tk-num { color: var(--num); }
+
+/* narration */
+.narration { padding: 14px 16px 16px; display: grid; gap: 6px; }
+.narration.is-error { border-color: var(--error); background: var(--error-soft); }
+.crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-family: var(--font-code); font-size: 12px; color: var(--muted); }
+.crumbs span.f { padding: 1px 6px; border-radius: 5px; background: var(--ctx); color: var(--ink); }
+.crumbs span.f.last { background: var(--accent-soft); color: var(--accent); }
+.narration h2.title { font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--ink); font-weight: 600; line-height: 1.3; }
+.narration.is-error h2.title { color: var(--error); }
+.narration p { margin: 0; max-width: 68ch; }
+.narration .err { font-family: var(--font-code); font-size: 13px; color: var(--error); }
+
+/* stacks */
+.stacks { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; }
+.stack-col { padding: 12px 16px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.stack-col + .stack-col { border-left: 1px solid var(--line); }
+.stack-col .sub { font-size: 12px; color: var(--muted); min-height: 1.5em; }
+.stack-col .sub .popped { color: var(--apply); font-weight: 500; }
+.stack { display: grid; gap: 6px; }
+.edge-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--gutter); }
+.cell { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--code-bg); min-height: 42px; }
+.cell .main { font-family: var(--font-code); font-size: 16px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.cell .main .nm { color: var(--accent); }
+.cell .main .eq { color: var(--muted); font-weight: 400; font-size: 13px; }
+.cell .main .unset { color: var(--muted); font-weight: 400; font-size: 13px; font-style: italic; }
+.cell .kind { font-size: 11px; color: var(--muted); text-align: right; line-height: 1.25; }
+.cell .kind .mono { font-size: 10.5px; }
+.cell.var { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.cell.paren { border-style: dashed; background: transparent; }
+.cell.is-new { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); animation: drop .28s ease-out; }
+.cell.is-new.result { border-color: var(--apply); box-shadow: 0 0 0 2px var(--apply-soft); }
+.empty { font-size: 13px; color: var(--muted); font-style: italic; padding: 10px; border: 1px dashed var(--line); border-radius: 8px; text-align: center; }
+@keyframes drop { from { transform: translateY(-6px); opacity: .2; } to { transform: none; opacity: 1; } }
+
+/* helper */
+.helper .none { padding: 12px 16px 16px; color: var(--muted); font-size: 14px; margin: 0; }
+.frame + .frame { border-top: 1px solid var(--line); }
+.frame-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 10px 16px 0; font-family: var(--font-code); font-size: 13px; font-weight: 600; }
+.frame-head .why { font-family: var(--font-ui); font-weight: 400; font-size: 12px; color: var(--muted); }
+.frame .code { margin-top: 8px; border-radius: 0; }
+.frame:last-child .code { border-radius: 0 0 var(--radius) var(--radius); }
+
+/* variables */
+.vars table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.vars-body { padding: 8px 16px 14px; display: grid; gap: 10px; }
+.vars th, .vars td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.vars th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.vars td.v { font-family: var(--font-code); font-weight: 600; }
+.vars td.was { font-size: 12.5px; color: var(--apply); }
+.vars tr.changed td { background: var(--apply-soft); }
+.output { margin: 0; font-size: 13px; color: var(--muted); }
+.output code { color: var(--ink); font-size: 14px; }
+
+/* state machine */
+.machine svg { display: block; width: 100%; height: auto; padding: 8px 10px 12px; }
+.machine .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.machine .box.on { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+.machine .box-title { fill: var(--ink); font: 600 13px var(--font-ui); }
+.machine .box-sub { fill: var(--muted); font: 400 10.5px var(--font-code); }
+.machine .edge { fill: none; stroke: var(--gutter); stroke-width: 1.5; }
+.machine .edge.on { stroke: var(--accent); stroke-width: 2.6; }
+.machine .elabel { fill: var(--muted); font: 400 11px var(--font-code); }
+.machine .elabel.on { fill: var(--accent); font-weight: 600; }
+.machine .mk { fill: var(--gutter); }
+.machine .mk-on { fill: var(--accent); }
+.machine .term { fill: var(--code-bg); stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.machine .term.on { stroke: var(--accent); stroke-dasharray: none; fill: var(--accent-soft); }
+.machine-note { margin: 0; padding: 0 16px 14px; font-size: 13px; color: var(--muted); max-width: 70ch; }
+
+@media (max-width: 960px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .setup { grid-template-columns: minmax(0, 1fr); }
+  .col.right { order: -1; }
+}
+@media (max-width: 560px) {
+  .stacks { grid-template-columns: minmax(0, 1fr); }
+  .stack-col + .stack-col { border-left: 0; border-top: 1px solid var(--line); }
+  .tape-row { flex-direction: column; }
+  .pills { grid-auto-flow: column; justify-content: start; }
+  .code { font-size: 11.5px; }
+  .btn { padding: 6px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cell.is-new { animation: none; }
+}
+</style>
+<style>
+/* ---------- additions for the full pipeline view ---------- */
+.frames { display: grid; }
+.frame .frame-head { align-items: baseline; }
+.frame.collapsed .code { padding: 4px 0 6px; margin-top: 6px; }
+.frame.is-top { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
+.locals { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 16px 0; }
+.loc { font-family: var(--font-code); font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--ctx); max-width: 100%; overflow-wrap: anywhere; }
+.loc b { color: var(--accent); font-weight: 600; }
+.frames-empty { margin: 0; padding: 12px 16px 16px; color: var(--muted); }
+
+.stages { display: flex; gap: 14px; align-items: stretch; overflow-x: auto; padding: 2px 0 4px; }
+.stage { flex: 1 1 0; min-width: 138px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  display: grid; gap: 1px; position: relative; align-content: center; }
+.stage + .stage::before { content: "›"; position: absolute; left: -11px; top: 50%; transform: translateY(-55%); color: var(--gutter); font-size: 18px; }
+.stage .no { font-family: var(--font-code); font-size: 10.5px; color: var(--gutter); letter-spacing: .04em; }
+.stage .nm { font-weight: 600; font-size: 13px; line-height: 1.25; }
+.stage .cl { font-family: var(--font-code); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage.done { opacity: .6; }
+.stage.now { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.stage.now .no, .stage.now .cl { color: var(--on-accent); opacity: .9; }
+.stage.bad { background: var(--error-soft); border-color: var(--error); color: var(--error); }
+.stage.bad .no, .stage.bad .cl { color: var(--error); }
+
+.io-body { padding: 10px 16px 16px; display: grid; gap: 12px; }
+.io-block { display: grid; gap: 6px; min-width: 0; }
+.io-block h3 { margin: 0; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.io-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-family: var(--font-code); font-size: 13px; }
+.io-lines li { display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; gap: 6px; padding: 2px 8px; border-radius: 6px; }
+.io-lines li .no { color: var(--gutter); }
+.io-lines li .st { font-family: var(--font-ui); font-size: 11px; color: var(--muted); }
+.io-lines li.cur { background: var(--accent-soft); font-weight: 600; }
+.io-lines li.cur .st { color: var(--accent); }
+.io-lines li.past { opacity: .5; }
+.stream { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--code-bg); border: 1px solid var(--line); font-family: var(--font-code);
+  font-size: 13.5px; min-height: 2.5em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.stream.err { color: var(--error); border-color: color-mix(in srgb, var(--error) 40%, var(--line)); }
+.stream .ghost { color: var(--muted); font-style: italic; }
+.stream .exit { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.stream.is-new { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.raw-line.plain { background: var(--ctx); color: var(--muted); }
+.io-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 560px) { .io-two { grid-template-columns: minmax(0, 1fr); } }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <p class="eyebrow">Main.main → Calculator.evaluate → StatementEvaluator → Calculator.format → System.out</p>
+    <h1>Full pipeline stepper</h1>
+    <p class="lede">Follow a program from stdin to the printed result. The call stack shows every method that is running, the stage bar shows where you are in the pipeline, and the streams panel shows what was read and what was printed.</p>
+  </header>
+
+  <section class="card setup" aria-label="Program">
+    <div class="editor">
+      <div class="editor-head">
+        <label class="label" for="program">stdin: one statement per line</label>
+        <select id="preset" aria-label="Load an example"></select>
+      </div>
+      <textarea id="program" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+    </div>
+    <div class="lines">
+      <span class="label">Lines (click to jump)</span>
+      <ol id="lineList"></ol>
+    </div>
+  </section>
+
+  <div class="transport">
+    <div class="controls">
+      <button class="btn" id="first" type="button" aria-label="Go to first step">⏮</button>
+      <button class="btn" id="prev" type="button">◀ Back</button>
+      <button class="btn primary" id="play" type="button">▶ Play</button>
+      <button class="btn" id="next" type="button">Step ▶</button>
+      <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Step">
+      <span class="counter" id="counter"></span>
+      <select id="detail" aria-label="Which steps to stop at">
+        <option value="all" selected>Every step</option>
+        <option value="key">Key steps only</option>
+      </select>
+      <select id="speed" aria-label="Playback speed">
+        <option value="1800">0.5×</option>
+        <option value="1100" selected>1×</option>
+        <option value="550">2×</option>
+      </select>
+    </div>
+    <div class="stages" id="stages" aria-label="Pipeline stage"></div>
+    <div class="tape-row">
+      <div class="pills" aria-label="Value of expectingOperand">
+        <span class="pill" id="pillValue">expecting a value · <b>true</b></span>
+        <span class="pill" id="pillOp">expecting an operator · <b>false</b></span>
+      </div>
+      <div class="tape" id="tape" aria-label="Tokens of the current line"></div>
+    </div>
+  </div>
+
+  <main class="workspace">
+    <div class="col left">
+      <section class="card">
+        <header><h2>Call stack</h2><span class="hint">newest call on top · ▶ the line that is running</span></header>
+        <div class="frames" id="frames"></div>
+      </section>
+      <section class="card machine">
+        <header><h2>The two states of expectingOperand</h2></header>
+        <svg viewBox="0 0 500 222" role="img" aria-label="State diagram: expecting a value and expecting an operator">
+          <defs>
+            <marker id="mk" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0 0 L10 5 L0 10 z"/></marker>
+            <marker id="mkOn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk-on" d="M0 0 L10 5 L0 10 z"/></marker>
+          </defs>
+          <path class="edge" id="e-toOperator" d="M175 80 C215 32, 285 32, 325 80" marker-end="url(#mk)"/>
+          <text class="elabel" id="l-toOperator" x="250" y="26" text-anchor="middle">NUMBER, IDENTIFIER</text>
+          <path class="edge" id="e-toValue" d="M325 134 C285 182, 215 182, 175 134" marker-end="url(#mk)"/>
+          <text class="elabel" id="l-toValue" x="250" y="196" text-anchor="middle">binary or assignment operator</text>
+          <path class="edge" id="e-stayValue" d="M40 97 C2 80, 2 134, 40 117" marker-end="url(#mk)"/>
+          <text class="elabel" id="l-stayValue" x="8" y="66">( + − ++ −− (prefix)</text>
+          <path class="edge" id="e-stayOperator" d="M460 97 C498 80, 498 134, 460 117" marker-end="url(#mk)"/>
+          <text class="elabel" id="l-stayOperator" x="494" y="66" text-anchor="end">postfix ++ −−, )</text>
+          <path class="edge" id="e-eof" d="M430 134 L430 168" marker-end="url(#mk)"/>
+          <rect class="term" id="t-eof" x="372" y="172" width="116" height="30" rx="7"/>
+          <text class="elabel" id="l-eof" x="430" y="191" text-anchor="middle">EOF → finish()</text>
+          <rect class="box" id="s-value" x="40" y="80" width="170" height="54" rx="10"/>
+          <text class="box-title" x="125" y="103" text-anchor="middle">expecting a value</text>
+          <text class="box-sub" x="125" y="121" text-anchor="middle">expectingOperand = true</text>
+          <rect class="box" id="s-operator" x="290" y="80" width="170" height="54" rx="10"/>
+          <text class="box-title" x="375" y="103" text-anchor="middle">expecting an operator</text>
+          <text class="box-sub" x="375" y="121" text-anchor="middle">expectingOperand = false</text>
+        </svg>
+        <p class="machine-note">evaluate() sends each token to readInOperandPosition() or readInOperatorPosition(), depending on the state. The same token means different things in each: <code>-</code> is negation or subtraction, <code>++</code> is prefix or postfix. Any token without an arrow out of the current state is a syntax error.</p>
+      </section>
+    </div>
+
+    <div class="col right">
+      <section class="card narration" id="narration" aria-live="polite">
+        <div class="crumbs" id="crumbs"></div>
+        <h2 class="title" id="stepTitle"></h2>
+        <p id="stepText"></p>
+        <p class="err" id="stepError" hidden></p>
+      </section>
+      <section class="card">
+        <header><h2>Standard streams</h2><span class="hint">what was read and what was printed</span></header>
+        <div class="io-body">
+          <div class="io-block"><h3>stdin</h3><ol class="io-lines" id="stdin"></ol></div>
+          <div class="io-two">
+            <div class="io-block"><h3>stdout</h3><pre class="stream" id="stdout"></pre></div>
+            <div class="io-block"><h3>stderr</h3><pre class="stream err" id="stderr"></pre></div>
+          </div>
+        </div>
+      </section>
+      <section class="card stacks" aria-label="Stacks">
+        <div class="stack-col">
+          <h3>Operand stack</h3>
+          <div class="sub" id="operandSub"></div>
+          <div class="edge-label">top</div>
+          <div class="stack" id="operandStack"></div>
+        </div>
+        <div class="stack-col">
+          <h3>Operator stack</h3>
+          <div class="sub" id="operatorSub"></div>
+          <div class="edge-label">top</div>
+          <div class="stack" id="operatorStack"></div>
+        </div>
+      </section>
+      <section class="card vars">
+        <header><h2>Variables</h2></header>
+        <div class="vars-body">
+          <div id="varTable"></div>
+          <p class="output" id="output"></p>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script id="engine">
+/* A JavaScript port of Main + Calculator + Lexer + StatementEvaluator + Operator, instrumented to record one snapshot per step.
+   SRC holds the real Java methods, extracted from the source files; focus lines are found by searching them. */
+const SRC = {
+ "Main.main": [
+  "public static void main(String[] args) throws IOException {",
+  "    List<String> lines;",
+  "    if (args.length > 0) {",
+  "        lines = Files.readAllLines(Path.of(args[0]), StandardCharsets.UTF_8);",
+  "    } else {",
+  "        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {",
+  "            lines = reader.lines().toList();",
+  "        }",
+  "    }",
+  "    try {",
+  "        System.out.println(Calculator.format(Calculator.evaluate(lines)));",
+  "    } catch (CalculatorException e) {",
+  "        System.err.println(\"Error: \" + e.getMessage());",
+  "        System.exit(1);",
+  "    }",
+  "}"
+ ],
+ "Calculator.evaluate": [
+  "public static Map<String, Integer> evaluate(Iterable<String> program) {",
+  "    Variables variables = new Variables();",
+  "    int lineNumber = 0;",
+  "    for (String line : program) {",
+  "        lineNumber++;",
+  "        if (line.isBlank()) {",
+  "            continue;",
+  "        }",
+  "        try {",
+  "            new StatementEvaluator(variables).evaluate(line);",
+  "        } catch (CalculatorException e) {",
+  "            throw new CalculatorException(\"Line \" + lineNumber + \": \" + e.getMessage(), e);",
+  "        }",
+  "    }",
+  "    return variables.asMap();",
+  "}"
+ ],
+ "Calculator.format": [
+  "public static String format(Map<String, Integer> variables) {",
+  "    StringJoiner joiner = new StringJoiner(\",\", \"(\", \")\");",
+  "    variables.forEach((name, value) -> joiner.add(name + \"=\" + value));",
+  "    return joiner.toString();",
+  "}"
+ ],
+ "StatementEvaluator.evaluate": [
+  "void evaluate(String line) {",
+  "    for (Token token : Lexer.tokenize(line)) {",
+  "        if (expectingOperand) {",
+  "            readInOperandPosition(token);",
+  "        } else {",
+  "            readInOperatorPosition(token);",
+  "        }",
+  "    }",
+  "}"
+ ],
+ "StatementEvaluator.readInOperandPosition": [
+  "private void readInOperandPosition(Token token) {",
+  "    switch (token.type()) {",
+  "        case NUMBER -> pushOperand(new Operand.Value(parseLiteral(token)));",
+  "        case IDENTIFIER -> pushOperand(variables.reference(token.text()));",
+  "        case LPAREN -> operators.push(Operator.OPEN_PAREN);",
+  "        case PLUS -> operators.push(Operator.UNARY_PLUS);",
+  "        case MINUS -> operators.push(Operator.NEGATE);",
+  "        case INCREMENT -> operators.push(Operator.PRE_INCREMENT);",
+  "        case DECREMENT -> operators.push(Operator.PRE_DECREMENT);",
+  "        default -> throw unexpected(token);",
+  "    }",
+  "}"
+ ],
+ "StatementEvaluator.readInOperatorPosition": [
+  "private void readInOperatorPosition(Token token) {",
+  "    switch (token.type()) {",
+  "        case INCREMENT -> apply(Operator.POST_INCREMENT);",
+  "        case DECREMENT -> apply(Operator.POST_DECREMENT);",
+  "        case RPAREN -> closeParenthesis(token);",
+  "        case EOF -> finish();",
+  "        default -> pushBinaryOperator(binaryOperator(token));",
+  "    }",
+  "}"
+ ],
+ "StatementEvaluator.pushOperand": [
+  "private void pushOperand(Operand operand) {",
+  "    operands.push(operand);",
+  "    expectingOperand = false;",
+  "}"
+ ],
+ "StatementEvaluator.pushBinaryOperator": [
+  "private void pushBinaryOperator(Operator incoming) {",
+  "    while (!operators.isEmpty() && operators.peek().appliesBefore(incoming)) {",
+  "        apply(operators.pop());",
+  "    }",
+  "    operators.push(incoming);",
+  "    expectingOperand = true;",
+  "}"
+ ],
+ "StatementEvaluator.closeParenthesis": [
+  "private void closeParenthesis(Token token) {",
+  "    while (!operators.isEmpty() && operators.peek() != Operator.OPEN_PAREN) {",
+  "        apply(operators.pop());",
+  "    }",
+  "    if (operators.isEmpty()) {",
+  "        throw new CalculatorException(\"Unmatched ')' at position \" + token.position());",
+  "    }",
+  "    operators.pop();",
+  "}"
+ ],
+ "StatementEvaluator.finish": [
+  "private void finish() {",
+  "    while (!operators.isEmpty()) {",
+  "        Operator operator = operators.pop();",
+  "        if (operator == Operator.OPEN_PAREN) {",
+  "            throw new CalculatorException(\"Expected ')' but found end of input\");",
+  "        }",
+  "        apply(operator);",
+  "    }",
+  "    if (lastApplied == null || !lastApplied.writesVariable()) {",
+  "        throw new CalculatorException(\"Statement must be an assignment or increment/decrement\");",
+  "    }",
+  "}"
+ ],
+ "StatementEvaluator.apply": [
+  "private void apply(Operator operator) {",
+  "    lastApplied = operator;",
+  "    operands.push(new Operand.Value(operator.apply(operands, variables)));",
+  "}"
+ ],
+ "StatementEvaluator.parseLiteral": [
+  "private static int parseLiteral(Token token) {",
+  "    try {",
+  "        return Integer.parseInt(token.text());",
+  "    } catch (NumberFormatException e) {",
+  "        throw new CalculatorException(\"Integer literal out of range at position \" + token.position(), e);",
+  "    }",
+  "}"
+ ],
+ "Operator.apply": [
+  "int apply(Deque<Operand> operands, Variables variables) {",
+  "    if (binaryAction != null) {",
+  "        Operand right = operands.pop();",
+  "        Operand left = operands.pop();",
+  "        return binaryAction.apply(left, right, variables);",
+  "    }",
+  "    if (unaryAction != null) {",
+  "        return unaryAction.apply(operands.pop(), variables);",
+  "    }",
+  "    throw new IllegalStateException(this + \" cannot be applied\");",
+  "}"
+ ],
+ "Operator.appliesBefore": [
+  "boolean appliesBefore(Operator incoming) {",
+  "    int order = precedence.compareTo(incoming.precedence);",
+  "    return order > 0 || order == 0 && incoming.precedence != Precedence.ASSIGNMENT;",
+  "}"
+ ],
+ "Operator.writesVariable": [
+  "boolean writesVariable() {",
+  "    return switch (this) {",
+  "        case PRE_INCREMENT, PRE_DECREMENT, POST_INCREMENT, POST_DECREMENT -> true;",
+  "        default -> precedence == Precedence.ASSIGNMENT;",
+  "    };",
+  "}"
+ ],
+ "Variables.reference": [
+  "Operand.Variable reference(String name) {",
+  "    return new Operand.Variable(name, values.get(name));",
+  "}"
+ ],
+ "Variables.assign": [
+  "int assign(Operand target, int value) {",
+  "    if (!(target instanceof Operand.Variable variable)) {",
+  "        throw new CalculatorException(\"Only a variable can be assigned to\");",
+  "    }",
+  "    values.put(variable.name(), value);",
+  "    return value;",
+  "}"
+ ],
+ "Lexer.tokenize": [
+  "static List<Token> tokenize(String source) {",
+  "    return new Lexer(source).run();",
+  "}"
+ ],
+ "Operand.Variable.value": [
+  "public int value() {",
+  "    if (current == null) {",
+  "        throw new CalculatorException(\"Variable '\" + name + \"' is not defined\");",
+  "    }",
+  "    return current;",
+  "}"
+ ],
+ "action:ASSIGN": [
+  "ASSIGN(Precedence.ASSIGNMENT, (target, value, variables) -> variables.assign(target, value.value())),"
+ ],
+ "action:ADD_ASSIGN": [
+  "ADD_ASSIGN(Precedence.ASSIGNMENT, compound(BinaryOp.ADD)),",
+  "",
+  "private static BinaryAction compound(BinaryOp op) {",
+  "    return (target, right, variables) -> variables.assign(target, op.apply(target.value(), right.value()));",
+  "}"
+ ],
+ "action:SUBTRACT_ASSIGN": [
+  "SUBTRACT_ASSIGN(Precedence.ASSIGNMENT, compound(BinaryOp.SUBTRACT)),",
+  "",
+  "private static BinaryAction compound(BinaryOp op) {",
+  "    return (target, right, variables) -> variables.assign(target, op.apply(target.value(), right.value()));",
+  "}"
+ ],
+ "action:MULTIPLY_ASSIGN": [
+  "MULTIPLY_ASSIGN(Precedence.ASSIGNMENT, compound(BinaryOp.MULTIPLY)),",
+  "",
+  "private static BinaryAction compound(BinaryOp op) {",
+  "    return (target, right, variables) -> variables.assign(target, op.apply(target.value(), right.value()));",
+  "}"
+ ],
+ "action:DIVIDE_ASSIGN": [
+  "DIVIDE_ASSIGN(Precedence.ASSIGNMENT, compound(BinaryOp.DIVIDE)),",
+  "",
+  "private static BinaryAction compound(BinaryOp op) {",
+  "    return (target, right, variables) -> variables.assign(target, op.apply(target.value(), right.value()));",
+  "}"
+ ],
+ "action:MODULO_ASSIGN": [
+  "MODULO_ASSIGN(Precedence.ASSIGNMENT, compound(BinaryOp.MODULO)),",
+  "",
+  "private static BinaryAction compound(BinaryOp op) {",
+  "    return (target, right, variables) -> variables.assign(target, op.apply(target.value(), right.value()));",
+  "}"
+ ],
+ "action:ADD": [
+  "ADD(Precedence.ADDITIVE, arithmetic(BinaryOp.ADD)),",
+  "",
+  "private static BinaryAction arithmetic(BinaryOp op) {",
+  "    return (left, right, variables) -> op.apply(left.value(), right.value());",
+  "}"
+ ],
+ "action:SUBTRACT": [
+  "SUBTRACT(Precedence.ADDITIVE, arithmetic(BinaryOp.SUBTRACT)),",
+  "",
+  "private static BinaryAction arithmetic(BinaryOp op) {",
+  "    return (left, right, variables) -> op.apply(left.value(), right.value());",
+  "}"
+ ],
+ "action:MULTIPLY": [
+  "MULTIPLY(Precedence.MULTIPLICATIVE, arithmetic(BinaryOp.MULTIPLY)),",
+  "",
+  "private static BinaryAction arithmetic(BinaryOp op) {",
+  "    return (left, right, variables) -> op.apply(left.value(), right.value());",
+  "}"
+ ],
+ "action:DIVIDE": [
+  "DIVIDE(Precedence.MULTIPLICATIVE, arithmetic(BinaryOp.DIVIDE)),",
+  "",
+  "private static BinaryAction arithmetic(BinaryOp op) {",
+  "    return (left, right, variables) -> op.apply(left.value(), right.value());",
+  "}"
+ ],
+ "action:MODULO": [
+  "MODULO(Precedence.MULTIPLICATIVE, arithmetic(BinaryOp.MODULO)),",
+  "",
+  "private static BinaryAction arithmetic(BinaryOp op) {",
+  "    return (left, right, variables) -> op.apply(left.value(), right.value());",
+  "}"
+ ],
+ "action:NEGATE": [
+  "NEGATE(Precedence.PREFIX, (operand, variables) -> -operand.value()),"
+ ],
+ "action:UNARY_PLUS": [
+  "UNARY_PLUS(Precedence.PREFIX, (operand, variables) -> operand.value()),"
+ ],
+ "action:PRE_INCREMENT": [
+  "PRE_INCREMENT(Precedence.PREFIX, preChange(1)),",
+  "",
+  "private static UnaryAction preChange(int delta) {",
+  "    return (target, variables) -> variables.assign(target, target.value() + delta);",
+  "}"
+ ],
+ "action:PRE_DECREMENT": [
+  "PRE_DECREMENT(Precedence.PREFIX, preChange(-1)),",
+  "",
+  "private static UnaryAction preChange(int delta) {",
+  "    return (target, variables) -> variables.assign(target, target.value() + delta);",
+  "}"
+ ],
+ "action:POST_INCREMENT": [
+  "POST_INCREMENT(Precedence.POSTFIX, postChange(1)),",
+  "",
+  "private static UnaryAction postChange(int delta) {",
+  "    return (target, variables) -> {",
+  "        int old = target.value();",
+  "        variables.assign(target, old + delta);",
+  "        return old;",
+  "    };",
+  "}"
+ ],
+ "action:POST_DECREMENT": [
+  "POST_DECREMENT(Precedence.POSTFIX, postChange(-1));",
+  "",
+  "private static UnaryAction postChange(int delta) {",
+  "    return (target, variables) -> {",
+  "        int old = target.value();",
+  "        variables.assign(target, old + delta);",
+  "        return old;",
+  "    };",
+  "}"
+ ]
+};
+
+const PRECEDENCE = ['PARENTHESIS', 'ASSIGNMENT', 'ADDITIVE', 'MULTIPLICATIVE', 'PREFIX', 'POSTFIX'];
+/* sym is only for display; the Java enum has no symbol. kind names the factory (or lambda) that defines the action. */
+const OPS = {
+  OPEN_PAREN:      { sym: '(',  prec: 0, kind: null },
+  ASSIGN:          { sym: '=',  prec: 1, kind: 'assign' },
+  ADD_ASSIGN:      { sym: '+=', prec: 1, kind: 'compound', arith: '+' },
+  SUBTRACT_ASSIGN: { sym: '-=', prec: 1, kind: 'compound', arith: '-' },
+  MULTIPLY_ASSIGN: { sym: '*=', prec: 1, kind: 'compound', arith: '*' },
+  DIVIDE_ASSIGN:   { sym: '/=', prec: 1, kind: 'compound', arith: '/' },
+  MODULO_ASSIGN:   { sym: '%=', prec: 1, kind: 'compound', arith: '%' },
+  ADD:             { sym: '+',  prec: 2, kind: 'arithmetic', arith: '+' },
+  SUBTRACT:        { sym: '-',  prec: 2, kind: 'arithmetic', arith: '-' },
+  MULTIPLY:        { sym: '*',  prec: 3, kind: 'arithmetic', arith: '*' },
+  DIVIDE:          { sym: '/',  prec: 3, kind: 'arithmetic', arith: '/' },
+  MODULO:          { sym: '%',  prec: 3, kind: 'arithmetic', arith: '%' },
+  NEGATE:          { sym: '-',  prec: 4, kind: 'negate' },
+  UNARY_PLUS:      { sym: '+',  prec: 4, kind: 'plus' },
+  PRE_INCREMENT:   { sym: '++', prec: 4, kind: 'preChange', delta: 1 },
+  PRE_DECREMENT:   { sym: '--', prec: 4, kind: 'preChange', delta: -1 },
+  POST_INCREMENT:  { sym: '++', prec: 5, kind: 'postChange', delta: 1 },
+  POST_DECREMENT:  { sym: '--', prec: 5, kind: 'postChange', delta: -1 },
+};
+Object.values(OPS).forEach(o => { o.pn = PRECEDENCE[o.prec]; });
+const BINARY = {
+  PLUS: 'ADD', MINUS: 'SUBTRACT', STAR: 'MULTIPLY', SLASH: 'DIVIDE', PERCENT: 'MODULO',
+  ASSIGN: 'ASSIGN', PLUS_ASSIGN: 'ADD_ASSIGN', MINUS_ASSIGN: 'SUBTRACT_ASSIGN',
+  STAR_ASSIGN: 'MULTIPLY_ASSIGN', SLASH_ASSIGN: 'DIVIDE_ASSIGN', PERCENT_ASSIGN: 'MODULO_ASSIGN',
+};
+const UNARY_KINDS = ['negate', 'plus', 'preChange', 'postChange'];
+const isAssignment = op => OPS[op].prec === 1;
+const writesVariable = op => isAssignment(op) || /^(PRE|POST)_/.test(op);
+const appliesBefore = (waiting, incoming) =>
+  OPS[waiting].prec > OPS[incoming].prec || (OPS[waiting].prec === OPS[incoming].prec && !isAssignment(incoming));
+
+class CalcError extends Error {}
+
+/* Java int semantics: 32-bit wrap-around, truncating division. */
+function arith(ch, a, b) {
+  switch (ch) {
+    case '+': return (a + b) | 0;
+    case '-': return (a - b) | 0;
+    case '*': return Math.imul(a, b);
+    case '/': if (b === 0) throw new CalcError('Division by zero'); return Math.trunc(a / b) | 0;
+    case '%': if (b === 0) throw new CalcError('Modulo by zero'); return (a % b) | 0;
+  }
+  throw new Error('unknown arithmetic ' + ch);
+}
+
+function at(fn, needle, nth = 0) {
+  const lines = SRC[fn];
+  if (!lines) throw new Error('no source for ' + fn);
+  let seen = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes(needle)) {
+      if (seen === nth) return i + 1;
+      seen++;
+    }
+  }
+  throw new Error(`needle not found in ${fn}: ${needle}`);
+}
+
+function tokenize(src) {
+  const tokens = [];
+  const n = src.length;
+  const digit = c => c >= '0' && c <= '9';
+  const idStart = c => /[A-Za-z_$]/.test(c);
+  const idPart = c => /[A-Za-z0-9_$]/.test(c);
+  let pos = 0;
+  for (;;) {
+    while (pos < n && /\s/.test(src[pos])) pos++;
+    if (pos >= n) { tokens.push({ type: 'EOF', text: '', pos }); return tokens; }
+    const c = src[pos];
+    const start = pos;
+    if (digit(c)) {
+      while (pos < n && digit(src[pos])) pos++;
+      if (pos < n && idPart(src[pos])) throw new CalcError(`Invalid number literal at position ${start}`);
+      tokens.push({ type: 'NUMBER', text: src.slice(start, pos), pos: start });
+      continue;
+    }
+    if (idStart(c)) {
+      while (pos < n && idPart(src[pos])) pos++;
+      tokens.push({ type: 'IDENTIFIER', text: src.slice(start, pos), pos: start });
+      continue;
+    }
+    const next = src[pos + 1];
+    let type;
+    let len = 1;
+    switch (c) {
+      case '+':
+        if (next === '+') { type = 'INCREMENT'; len = 2; } else if (next === '=') { type = 'PLUS_ASSIGN'; len = 2; } else type = 'PLUS';
+        break;
+      case '-':
+        if (next === '-') { type = 'DECREMENT'; len = 2; } else if (next === '=') { type = 'MINUS_ASSIGN'; len = 2; } else type = 'MINUS';
+        break;
+      case '*': if (next === '=') { type = 'STAR_ASSIGN'; len = 2; } else type = 'STAR'; break;
+      case '/': if (next === '=') { type = 'SLASH_ASSIGN'; len = 2; } else type = 'SLASH'; break;
+      case '%': if (next === '=') { type = 'PERCENT_ASSIGN'; len = 2; } else type = 'PERCENT'; break;
+      case '=': type = 'ASSIGN'; break;
+      case '(': type = 'LPAREN'; break;
+      case ')': type = 'RPAREN'; break;
+      default: throw new CalcError(`Unexpected character '${c}' at position ${start}`);
+    }
+    pos += len;
+    tokens.push({ type, text: src.slice(start, pos), pos: start });
+  }
+}
+
+function describe(t) { return t.type === 'EOF' ? 'end of input' : `'${t.text}'`; }
+function fmt(o) {
+  if (!o.name) return String(o.value);
+  return o.value === undefined ? `${o.name} (unset)` : `${o.name} (${o.value})`;
+}
+function explainError(message) {
+  if (message.startsWith('Variable')) return 'This variable was never assigned, so Operand.Variable.value() has no value to return.';
+  if (message.startsWith('Only a variable')) return 'The operand on the stack is a computed value with no variable name attached, so Variables.assign() refuses to write to it.';
+  if (message.includes('by zero')) return 'Java int division by zero throws, and the calculator reports it as an error.';
+  return '';
+}
+const q = s => JSON.stringify(s);
+
+/* Which lines of the shown source are highlighted for each kind of operator action (needles, searched in the source). */
+function actionNeedles(op) {
+  const o = OPS[op];
+  switch (o.kind) {
+    case 'arithmetic': case 'compound': case 'preChange': return [1, 'return ('];
+    case 'postChange': return [1, 'int old = target.value();', 'variables.assign(target, old + delta);', 'return old;'];
+    default: return [1];
+  }
+}
+
+const STAGES = [
+  { id: 'input', no: 1, nm: 'Read input', cl: 'Main.main' },
+  { id: 'lines', no: 2, nm: 'Go through lines', cl: 'Calculator.evaluate' },
+  { id: 'lex', no: 3, nm: 'Split into tokens', cl: 'Lexer.tokenize' },
+  { id: 'eval', no: 4, nm: 'Evaluate', cl: 'StatementEvaluator' },
+  { id: 'format', no: 5, nm: 'Format result', cl: 'Calculator.format' },
+  { id: 'output', no: 6, nm: 'Print', cl: 'System.out' },
+];
+
+function simulate(program) {
+  const steps = [];
+  const vars = new Map();
+  const calls = [];
+  const io = { stdout: null, stderr: null, exit: null, building: null };
+  const inputLines = program.replace(/\r/g, '').split('\n');
+  if (inputLines.length > 1 && inputLines[inputLines.length - 1] === '') inputLines.pop();
+  const entries = [];
+  const STOP = {};
+  let stage = 'input';
+  let lineNumber = 0;
+  let failed = false;
+  /* per-line machine state */
+  const operands = [];
+  const operators = [];
+  let tokens = null;
+  let ti = -1;
+  let expecting = true;
+  let lastApplied = null;
+
+  const top = () => operators[operators.length - 1];
+  const push = v => operands.push({ name: null, value: v });
+
+  function snap(s) {
+    steps.push(Object.assign({
+      stage, lineNo: lineNumber, tokens, ti, expecting, lastApplied, minor: false,
+      operands: operands.map(o => ({ ...o })),
+      operators: operators.slice(),
+      vars: new Map(vars),
+      io: { ...io },
+      calls: calls.map(c => ({ fn: c.fn, label: c.label, why: c.why || '', focus: c.focus.slice(), locals: Object.entries(c.locals) })),
+      edge: null, changed: null, applied: null, title: '', text: '', error: null,
+    }, s));
+  }
+
+  function setFocus(f, ...needles) {
+    f.focus = needles.map(n => (typeof n === 'number' ? n : at(f.fn, n)));
+  }
+  function frame(fn, label, why, ...needles) {
+    const f = { fn, label, why: why || '', focus: [], locals: {} };
+    setFocus(f, ...needles);
+    calls.push(f);
+    return f;
+  }
+
+  /* The exception travels up: Calculator.evaluate wraps the message with the line number, main prints it and exits. */
+  function fail(message, s) {
+    snap(Object.assign({}, s, { error: message }));
+    const ceIdx = calls.findIndex(c => c.fn === 'Calculator.evaluate');
+    calls.length = ceIdx + 1;
+    const ce = calls[ceIdx];
+    setFocus(ce, 'catch (CalculatorException e)', 'throw new CalculatorException("Line "');
+    const wrapped = `Line ${lineNumber}: ${message}`;
+    stage = 'lines';
+    snap({ error: wrapped, title: 'Calculator.evaluate adds the line number',
+      text: 'The exception has travelled up through every frame above. evaluate() catches it, puts the line number in front of the message and throws it again.' });
+    calls.length = 1;
+    const main = calls[0];
+    setFocus(main, 'catch (CalculatorException e)', 'System.err.println("Error: " + e.getMessage());');
+    stage = 'output';
+    io.stderr = 'Error: ' + wrapped;
+    snap({ error: wrapped, title: 'main prints the error to stderr', text: 'The last catch is in main. Nothing has been printed to stdout, only the error goes to stderr.' });
+    setFocus(main, 'System.exit(1);');
+    io.exit = 1;
+    snap({ error: wrapped, title: 'System.exit(1)', text: 'The process ends with exit status 1. The variables are not printed when a line fails.' });
+    failed = true;
+    throw STOP;
+  }
+
+  /* ---------- StatementEvaluator ---------- */
+  function applyOp(op, why, extra) {
+    const base = calls.length;
+    const o = OPS[op];
+    const unary = UNARY_KINDS.includes(o.kind);
+    frame('StatementEvaluator.apply', `apply(${op})`, 'remember the operator, push the result',
+      'lastApplied = operator;', 'operands.push(new Operand.Value(operator.apply(operands, variables)));');
+    frame('Operator.apply', 'Operator.apply()', unary ? 'one operand: unaryAction' : 'two operands: binaryAction',
+      ...(unary ? ['if (unaryAction != null)', 'return unaryAction.apply(operands.pop(), variables);']
+        : ['if (binaryAction != null)', 'Operand right = operands.pop();', 'Operand left = operands.pop();', 'return binaryAction.apply(left, right, variables);']));
+    frame(`action:${op}`, `${op} action`, 'the behaviour lives in the operator itself', ...actionNeedles(op));
+    lastApplied = op;
+    const { sym } = o;
+
+    const readValue = operand => {
+      if (operand.value === undefined) {
+        frame('Operand.Variable.value', 'Operand.Variable.value()', 'current == null: never assigned', 'if (current == null)', 'throw new CalculatorException');
+        throw new CalcError(`Variable '${operand.name}' is not defined`);
+      }
+      return operand.value;
+    };
+    const assign = (target, value) => {
+      const f = frame('Variables.assign', 'Variables.assign()', 'stores the value and returns it', 'values.put(variable.name(), value);', 'return value;');
+      if (!target.name) {
+        setFocus(f, 'if (!(target instanceof Operand.Variable variable))', 'throw new CalculatorException("Only a variable');
+        f.why = 'the target is not a variable';
+        throw new CalcError('Only a variable can be assigned to');
+      }
+      vars.set(target.name, value);
+      return value;
+    };
+
+    let text;
+    let changed = null;
+    try {
+      switch (o.kind) {
+        case 'negate':
+        case 'plus': {
+          const a = operands.pop();
+          const v = readValue(a);
+          const r = o.kind === 'negate' ? (-v) | 0 : v;
+          push(r);
+          text = o.kind === 'negate'
+            ? `Pop ${fmt(a)} and push its negation, ${r}.`
+            : `Pop ${fmt(a)} and push ${r}. Only the value is pushed, so the result can no longer be assigned to.`;
+          break;
+        }
+        case 'arithmetic': {
+          const right = operands.pop();
+          const left = operands.pop();
+          const lv = readValue(left);
+          const rv = readValue(right);
+          const r = arith(o.arith, lv, rv);
+          push(r);
+          text = `Pop ${fmt(right)} (right) and ${fmt(left)} (left). Push ${lv} ${sym} ${rv} = ${r}.`;
+          break;
+        }
+        case 'assign': {
+          const right = operands.pop();
+          const target = operands.pop();
+          const value = readValue(right);
+          assign(target, value);
+          push(value);
+          changed = target.name;
+          text = `Pop the value ${value} and the target ${target.name}. Variables.assign() stores ${target.name} = ${value}, and the same ${value} is pushed, because an assignment is also an expression.`;
+          break;
+        }
+        case 'compound': {
+          const right = operands.pop();
+          const target = operands.pop();
+          const old = readValue(target);
+          const rv = readValue(right);
+          const r = arith(o.arith, old, rv);
+          assign(target, r);
+          push(r);
+          changed = target.name;
+          text = `Pop ${rv} and the target ${target.name}. The left side is ${old}, the value read when the scan reached ${target.name}: ${old} ${o.arith} ${rv} = ${r}. Store ${target.name} = ${r} and push it.`;
+          break;
+        }
+        case 'preChange': {
+          const target = operands.pop();
+          const old = readValue(target);
+          const r = (old + o.delta) | 0;
+          assign(target, r);
+          push(r);
+          changed = target.name;
+          text = `Pop ${fmt(target)}. Store ${target.name} = ${r} and push the new value, ${r}.`;
+          break;
+        }
+        case 'postChange': {
+          const target = operands.pop();
+          const old = readValue(target);
+          const r = (old + o.delta) | 0;
+          assign(target, r);
+          push(old);
+          changed = target.name;
+          text = `Pop ${fmt(target)}. Store ${target.name} = ${r} but push the old value, ${old}.`;
+          break;
+        }
+      }
+    } catch (e) {
+      if (e instanceof CalcError) {
+        fail(e.message, { title: `${op} threw an error`, text: explainError(e.message) });
+      }
+      throw e;
+    }
+    snap({ title: `Apply ${sym}  ·  ${op}`, text: (why ? why + ' ' : '') + text, changed, applied: op, ...extra });
+    calls.length = base;
+  }
+
+  function pushBinaryOperator(op) {
+    const f = frame('StatementEvaluator.pushBinaryOperator', `pushBinaryOperator(${op})`, '', 'private void pushBinaryOperator(Operator incoming)');
+    f.locals.incoming = op;
+    while (operators.length) {
+      const waiting = top();
+      setFocus(f, 'while (!operators.isEmpty()');
+      const before = appliesBefore(waiting, op);
+      const w = OPS[waiting];
+      const i = OPS[op];
+      let reason;
+      if (waiting === 'OPEN_PAREN') reason = `( is a wall: its precedence is PARENTHESIS, the lowest, so it never goes before anything.`;
+      else if (w.prec > i.prec) reason = `${w.sym} is ${w.pn} and ${i.sym} is only ${i.pn}. The higher one binds tighter, so the waiting ${w.sym} goes first.`;
+      else if (w.prec === i.prec && !isAssignment(op)) reason = `Both are ${w.pn}. Equal precedence goes left to right, so the waiting ${w.sym} goes first.`;
+      else if (w.prec === i.prec) reason = `Both are ASSIGNMENT. Assignment groups right to left, so the waiting ${w.sym} keeps waiting.`;
+      else reason = `${w.sym} is ${w.pn}, weaker than ${i.sym} (${i.pn}), so the waiting ${w.sym} keeps waiting.`;
+      const cmp = frame('Operator.appliesBefore', `${waiting}.appliesBefore(${op})`, before ? 'true: apply it now' : 'false: stop here',
+        'int order = precedence.compareTo(incoming.precedence);', 'return order > 0 || order == 0');
+      snap({ title: `${waiting}.appliesBefore(${op}) = ${before}`, text: reason });
+      calls.pop();
+      if (!before) break;
+      operators.pop();
+      setFocus(f, 'apply(operators.pop());');
+      f.why = 'while loop: apply what binds tighter';
+      applyOp(waiting, `${reason}`);
+    }
+    let reason;
+    if (!operators.length) reason = 'The operator stack is empty, so nothing waits ahead of it.';
+    else reason = `The loop stopped because ${top() === 'OPEN_PAREN' ? 'the top is (' : `the top ${OPS[top()].sym} does not go first`}.`;
+    operators.push(op);
+    expecting = true;
+    setFocus(f, 'operators.push(incoming);', 'expectingOperand = true;');
+    f.why = 'loop stopped: push the new operator';
+    snap({ edge: 'toValue', title: `Push ${OPS[op].sym}  ·  ${op}`,
+      text: `${reason} Push ${OPS[op].sym}; it waits until its right operand is complete. Now expect a value.` });
+    calls.pop();
+  }
+
+  function closeParenthesis(token) {
+    const f = frame('StatementEvaluator.closeParenthesis', 'closeParenthesis(token)', '', 'private void closeParenthesis(Token token)');
+    while (operators.length && top() !== 'OPEN_PAREN') {
+      setFocus(f, 'while (!operators.isEmpty() && operators.peek() != Operator.OPEN_PAREN)', 'apply(operators.pop());');
+      f.why = 'apply everything back to the (';
+      const op = operators.pop();
+      applyOp(op, `The ) closes the group, and ${OPS[op].sym} is still inside it, so it is applied now.`);
+    }
+    if (!operators.length) {
+      setFocus(f, 'if (operators.isEmpty())', 'throw new CalculatorException("Unmatched');
+      fail(`Unmatched ')' at position ${token.pos}`, { title: 'No matching (', text: 'The operator stack has no ( left, so this ) has nothing to close.' });
+    }
+    operators.pop();
+    setFocus(f, 'operators.pop();');
+    f.why = 'reached the (: drop it';
+    snap({ edge: 'stayOperator', title: 'Drop the (',
+      text: 'Everything inside the brackets has been applied, and the whole group is now a single value on the operand stack. Pop the ( and keep expecting an operator.' });
+    calls.pop();
+  }
+
+  function finish() {
+    const f = frame('StatementEvaluator.finish', 'finish()', '', 'private void finish()');
+    while (operators.length) {
+      const op = operators.pop();
+      if (op === 'OPEN_PAREN') {
+        setFocus(f, 'if (operator == Operator.OPEN_PAREN)', 'throw new CalculatorException("Expected');
+        fail("Expected ')' but found end of input", { title: 'Unclosed (', text: 'The line ended while a ( was still open.' });
+      }
+      setFocus(f, 'Operator operator = operators.pop();', 'apply(operator);');
+      f.why = 'end of line: apply everything, top first';
+      applyOp(op, 'End of line: everything still waiting is applied, starting from the top.');
+    }
+    setFocus(f, 'if (lastApplied == null');
+    f.why = 'check the statement';
+    if (!lastApplied) {
+      setFocus(f, 'if (lastApplied == null', 'throw new CalculatorException("Statement must be');
+      fail('Statement must be an assignment or increment/decrement', { title: 'Not a statement',
+        text: 'No operator was applied at all, so the line is only a value.' });
+    }
+    const writes = writesVariable(lastApplied);
+    const inc = /^(PRE|POST)_/.test(lastApplied);
+    frame('Operator.writesVariable', `${lastApplied}.writesVariable()`, 'does the root operator write a variable?',
+      ...(inc ? ['case PRE_INCREMENT, PRE_DECREMENT, POST_INCREMENT, POST_DECREMENT -> true;'] : ['default -> precedence == Precedence.ASSIGNMENT;']));
+    snap({ title: `${lastApplied}.writesVariable() = ${writes}`,
+      text: `The last operator applied is the root of the expression. ${writes ? 'It writes a variable, so the line is a valid statement.' : `${OPS[lastApplied].sym} only computes a value, so the line is not a statement.`}` });
+    calls.pop();
+    if (!writes) {
+      setFocus(f, 'if (lastApplied == null', 'throw new CalculatorException("Statement must be');
+      fail('Statement must be an assignment or increment/decrement', { title: 'Not a statement',
+        text: `The root operator is ${OPS[lastApplied].sym} (${lastApplied}), which does not write a variable.` });
+    }
+    snap({ edge: 'eof', title: 'Line finished',
+      text: `The last operator applied, ${OPS[lastApplied].sym} (${lastApplied}), is the root of the expression, and it writes a variable. evaluate() returns to Calculator.evaluate, which moves on to the next line.` });
+    calls.pop();
+  }
+
+  function readInOperandPosition(t) {
+    const rf = frame('StatementEvaluator.readInOperandPosition', 'readInOperandPosition(token)', 'expecting a value', 'private void readInOperandPosition(Token token)');
+    switch (t.type) {
+      case 'NUMBER': {
+        setFocus(rf, 'case NUMBER ->');
+        const v = Number(t.text);
+        if (v > 2147483647) {
+          frame('StatementEvaluator.parseLiteral', 'parseLiteral(token)', 'text → int', 'private static int parseLiteral(Token token)', 'catch (NumberFormatException e)', 'throw new CalculatorException("Integer literal');
+          fail(`Integer literal out of range at position ${t.pos}`, { title: 'Number too large', text: 'parseLiteral() only accepts values that fit in a Java int.' });
+        }
+        frame('StatementEvaluator.pushOperand', 'pushOperand(operand)', 'push it, then expect an operator', 'operands.push(operand);', 'expectingOperand = false;');
+        operands.push({ name: null, value: v });
+        expecting = false;
+        snap({ edge: 'toOperator', title: `Number ${t.text}`,
+          text: `We expected a value and got one. pushOperand() pushes ${v} as an Operand.Value, then expectingOperand becomes false.` });
+        calls.pop();
+        break;
+      }
+      case 'IDENTIFIER': {
+        setFocus(rf, 'case IDENTIFIER ->');
+        const has = vars.has(t.text);
+        frame('Variables.reference', 'variables.reference(name)', 'reads the value right now', 'return new Operand.Variable(name, values.get(name));');
+        snap({ title: `variables.reference(${q(t.text)})`,
+          text: has
+            ? `The store holds ${vars.get(t.text)} for ${t.text} at this moment, and an Operand.Variable keeps both the name and that value. Reading now is what gives Java's left-to-right order, and the name stays attached so = or ++ can still write to it.`
+            : `${t.text} has no value yet. The Operand.Variable is created with current = null, which is fine as long as it is only assigned to.` });
+        calls.pop();
+        frame('StatementEvaluator.pushOperand', 'pushOperand(operand)', 'push it, then expect an operator', 'operands.push(operand);', 'expectingOperand = false;');
+        operands.push({ name: t.text, value: vars.get(t.text) });
+        expecting = false;
+        snap({ edge: 'toOperator', title: `Variable ${t.text}`, text: 'The operand is pushed, then expectingOperand becomes false: next we expect an operator.' });
+        calls.pop();
+        break;
+      }
+      case 'LPAREN':
+        setFocus(rf, 'case LPAREN ->');
+        operators.push('OPEN_PAREN');
+        snap({ edge: 'stayValue', title: 'Open bracket',
+          text: 'Push ( onto the operator stack. It acts as a wall: nothing below it is applied until the matching ). Still expecting a value.' });
+        break;
+      case 'PLUS':
+        setFocus(rf, 'case PLUS ->');
+        operators.push('UNARY_PLUS');
+        snap({ edge: 'stayValue', title: 'Unary +',
+          text: 'A + where a value should be can only be unary plus. Its operand has not arrived yet, so it waits on the operator stack.' });
+        break;
+      case 'MINUS':
+        setFocus(rf, 'case MINUS ->');
+        operators.push('NEGATE');
+        snap({ edge: 'stayValue', title: 'Unary −  ·  NEGATE',
+          text: 'A − where a value should be is negation, not subtraction. Its operand has not arrived yet, so it waits on the operator stack.' });
+        break;
+      case 'INCREMENT':
+      case 'DECREMENT': {
+        const op = t.type === 'INCREMENT' ? 'PRE_INCREMENT' : 'PRE_DECREMENT';
+        setFocus(rf, `case ${t.type} ->`);
+        operators.push(op);
+        snap({ edge: 'stayValue', title: `Prefix ${t.text}  ·  ${op}`,
+          text: `A ${t.text} where a value should be must be prefix, because its variable comes next. It waits on the operator stack until a weaker operator, a ) or the end of the line arrives.` });
+        break;
+      }
+      default:
+        setFocus(rf, 'default -> throw unexpected(token);');
+        fail(`${describe(t)} unexpected at position ${t.pos}`, { title: 'Syntax error',
+          text: `A value was required here (a number, a variable, ( or a prefix operator), but the token is ${describe(t)}.` });
+    }
+    calls.pop();
+  }
+
+  function readInOperatorPosition(t) {
+    const rf = frame('StatementEvaluator.readInOperatorPosition', 'readInOperatorPosition(token)', 'expecting an operator', 'private void readInOperatorPosition(Token token)');
+    switch (t.type) {
+      case 'INCREMENT':
+      case 'DECREMENT': {
+        const op = t.type === 'INCREMENT' ? 'POST_INCREMENT' : 'POST_DECREMENT';
+        setFocus(rf, `case ${t.type} ->`);
+        applyOp(op, `A ${t.text} right after a value is postfix. Its operand is already on top of the stack, so it is applied immediately instead of waiting.`, { edge: 'stayOperator' });
+        break;
+      }
+      case 'RPAREN':
+        setFocus(rf, 'case RPAREN ->');
+        closeParenthesis(t);
+        break;
+      case 'EOF':
+        setFocus(rf, 'case EOF ->');
+        finish();
+        break;
+      default: {
+        setFocus(rf, 'default -> pushBinaryOperator(binaryOperator(token));');
+        const op = BINARY[t.type];
+        if (!op) {
+          fail(`${describe(t)} unexpected at position ${t.pos}`, { title: 'Syntax error',
+            text: `After a value we need an operator, ) or the end of the line, but the token is ${describe(t)}.` });
+        }
+        pushBinaryOperator(op);
+      }
+    }
+    calls.pop();
+  }
+
+  function evaluateLine(src) {
+    operands.length = 0;
+    operators.length = 0;
+    tokens = null;
+    ti = -1;
+    expecting = true;
+    lastApplied = null;
+    stage = 'eval';
+    const se = frame('StatementEvaluator.evaluate', 'StatementEvaluator.evaluate(line)', 'one statement', 'void evaluate(String line)');
+    se.locals.line = q(src.trim());
+    setFocus(se, 'for (Token token : Lexer.tokenize(line))');
+    snap({ minor: true, title: 'new StatementEvaluator(variables).evaluate(line)',
+      text: 'A new StatementEvaluator is created for this line, so both stacks start empty and expectingOperand is true: a statement must begin with a value. The Variables object is the one shared by all lines.' });
+    const lf = frame('Lexer.tokenize', 'Lexer.tokenize(source)', 'text → tokens', 'static List<Token> tokenize(String source)');
+    stage = 'lex';
+    try {
+      tokens = tokenize(src);
+    } catch (e) {
+      if (e instanceof CalcError) {
+        setFocus(lf, 'return new Lexer(source).run();');
+        fail(e.message, { title: 'The lexer rejected this line', text: 'Lexer.tokenize() met a character it does not recognise, so evaluation never starts.' });
+      }
+      throw e;
+    }
+    setFocus(lf, 'return new Lexer(source).run();');
+    snap({ title: `Lexer.tokenize() → ${tokens.length} tokens`,
+      text: 'The lexer scans the line from left to right and always takes the longest operator it can (maximal munch), so i+++j is i ++ + j. The last token is EOF, a marker for the end of the line.' });
+    calls.pop();
+    stage = 'eval';
+    for (ti = 0; ti < tokens.length; ti++) {
+      const t = tokens[ti];
+      if (expecting) {
+        setFocus(se, 'readInOperandPosition(token);');
+        readInOperandPosition(t);
+      } else {
+        setFocus(se, 'readInOperatorPosition(token);');
+        readInOperatorPosition(t);
+      }
+    }
+    calls.pop();
+  }
+
+  /* ---------- Main + Calculator ---------- */
+  try {
+    const main = frame('Main.main', 'main(args)', 'program entry', 'public static void main(String[] args)');
+    setFocus(main, 'if (args.length > 0)', 'lines = reader.lines().toList();');
+    main.locals.args = '[]';
+    snap({ title: 'main(args) starts',
+      text: 'No file name is given, so the else branch runs and reads all of stdin. This page lets you type the stdin content in the box above.' });
+    main.locals.lines = `${inputLines.length} line${inputLines.length === 1 ? '' : 's'}`;
+    snap({ title: `stdin is read into a list of ${inputLines.length} line${inputLines.length === 1 ? '' : 's'}`,
+      text: 'reader.lines().toList() collects every line of the input before anything is evaluated.' });
+    setFocus(main, 'System.out.println(Calculator.format(Calculator.evaluate(lines)));');
+    stage = 'lines';
+    snap({ title: 'Calculator.evaluate(lines) runs first',
+      text: 'The innermost call is evaluated first: evaluate(), then format() on its result, then println().' });
+
+    const ce = frame('Calculator.evaluate', 'Calculator.evaluate(program)', 'loops over the lines', 'public static Map<String, Integer> evaluate(Iterable<String> program)');
+    setFocus(ce, 'Variables variables = new Variables();', 'int lineNumber = 0;');
+    snap({ minor: true, title: 'new Variables()',
+      text: 'One variable store for the whole program. Every line gets its own StatementEvaluator, but they all write into this store.' });
+    for (let i = 0; i < inputLines.length; i++) {
+      const src = inputLines[i];
+      lineNumber = i + 1;
+      ce.locals.lineNumber = lineNumber;
+      ce.locals.line = q(src);
+      setFocus(ce, 'for (String line : program)', 'lineNumber++;');
+      if (src.trim()) entries.push({ lineNo: lineNumber, src, start: steps.length });
+      stage = 'lines';
+      tokens = null; ti = -1; operands.length = 0; operators.length = 0;
+      snap({ minor: !src.trim() ? true : false, title: src.trim() ? `Line ${lineNumber}: ${src.trim()}` : `Line ${lineNumber} is blank`,
+        text: src.trim() ? 'The loop takes the next line and counts it. The number is kept for error messages.' : 'A blank line is skipped by isBlank() and continue.' });
+      if (!src.trim()) { setFocus(ce, 'if (line.isBlank())', 'continue;'); snap({ minor: true, title: `Line ${lineNumber} skipped`, text: 'Blank lines do nothing.' }); continue; }
+      setFocus(ce, 'new StatementEvaluator(variables).evaluate(line);');
+      evaluateLine(src);
+      stage = 'lines';
+    }
+    delete ce.locals.line;
+    setFocus(ce, 'return variables.asMap();');
+    tokens = null; ti = -1; operands.length = 0; operators.length = 0; lastApplied = null;
+    snap({ title: 'All lines are done: evaluate() returns the variables',
+      text: 'asMap() is a read-only view of the store, already sorted by name because Variables keeps a TreeMap.' });
+    calls.pop();
+
+    const names = [...vars.keys()].sort();
+    stage = 'format';
+    const ff = frame('Calculator.format', 'Calculator.format(variables)', 'map → text', 'public static String format(Map<String, Integer> variables)');
+    setFocus(ff, 'StringJoiner joiner = new StringJoiner(",", "(", ")");');
+    io.building = '(';
+    snap({ title: 'new StringJoiner(",", "(", ")")', text: 'The joiner puts a comma between the parts and wraps the whole thing in brackets.' });
+    const parts = [];
+    for (const n of names) {
+      parts.push(`${n}=${vars.get(n)}`);
+      setFocus(ff, 'variables.forEach((name, value) -> joiner.add(name + "=" + value));');
+      io.building = '(' + parts.join(',');
+      snap({ title: `joiner.add(${q(parts[parts.length - 1])})`, text: 'One entry is added per variable, in name order.' });
+    }
+    const result = '(' + parts.join(',') + ')';
+    setFocus(ff, 'return joiner.toString();');
+    io.building = result;
+    snap({ title: `format() returns ${result}`, text: 'The joiner adds the closing bracket and gives back the finished text.' });
+    calls.pop();
+
+    stage = 'output';
+    setFocus(main, 'System.out.println(Calculator.format(Calculator.evaluate(lines)));');
+    io.building = null;
+    io.stdout = result;
+    snap({ title: 'System.out.println(...)', text: `The text is written to stdout, followed by a line break: ${result}` });
+    io.exit = 0;
+    calls.pop();
+    snap({ title: 'main returns', text: 'No exception was thrown, so the process ends with exit status 0.' });
+  } catch (e) {
+    if (e !== STOP) throw e;
+  }
+  return { steps, entries, failed, inputLines };
+}
+
+function formatVars(vars) {
+  return '(' + [...vars.keys()].sort().map(k => `${k}=${vars.get(k)}`).join(',') + ')';
+}
+</script>
+
+<script>
+const PRESETS = [
+  { label: 'Exercise example', text: 'i = 0\nj = ++i\nx = i++ + 5\ny = (5 + 3) * 10\ni += y' },
+  { label: 'Brackets, ++, -- and +=', text: 'x = 10\ni = 1\nj = 5\nx += (i++ + --j) * 2 - ++i' },
+  { label: 'Chained assignment', text: 'a = b = 2\nc = a + (b = 5) * 2' },
+  { label: 'Precedence and unary minus', text: 'n = 7\nr = -n * 2 + 10 % 4 - -3' },
+  { label: 'Read before write: i += i++', text: 'i = 5\ni += i++' },
+  { label: 'With a blank line', text: 'a = 1\n\nb = a + 1' },
+  { label: 'Error: syntax', text: 'x = 1\ny = x + * 2' },
+  { label: 'Error: not a variable', text: 'x = 1\ny = (x + 1)++' },
+  { label: 'Error: not a statement', text: 'x = 1\nx + 1' },
+  { label: 'Error: undefined variable', text: 'y = x + 1' },
+  { label: 'Error: division by zero', text: 'x = 1\nx /= 0' },
+  { label: 'Error: unclosed bracket', text: 'x = (1 + 2' },
+  { label: 'Error: unmatched bracket', text: 'x = 1 + 2)' },
+  { label: 'Error: bad character', text: 'x = 1 # 2' },
+  { label: 'Error: number too large', text: 'x = 99999999999' },
+];
+
+const KW = new Set(['void', 'for', 'if', 'else', 'switch', 'case', 'default', 'throw', 'new', 'boolean', 'private', 'public',
+  'static', 'return', 'while', 'int', 'null', 'true', 'false', 'try', 'catch', 'final', 'continue', 'throws', 'instanceof']);
+const TYPES = new Set(['String', 'Token', 'Operand', 'Operator', 'Lexer', 'CalculatorException', 'IllegalStateException', 'Variables',
+  'Deque', 'BinaryOp', 'BinaryAction', 'UnaryAction', 'Precedence', 'Calculator', 'Map', 'List', 'StringJoiner', 'Integer',
+  'System', 'Files', 'Path', 'BufferedReader', 'InputStreamReader', 'StandardCharsets', 'IOException', 'Iterable', 'NumberFormatException', 'Variable']);
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function highlight(code) {
+  const re = /("(?:[^"\\]|\\.)*")|(\b\d+\b)|(\b[A-Za-z_][A-Za-z0-9_]*\b)/g;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = re.exec(code))) {
+    out += esc(code.slice(last, m.index));
+    const tok = m[0];
+    let cls = null;
+    if (m[1]) cls = 'str';
+    else if (m[2]) cls = 'num';
+    else if (KW.has(tok)) cls = 'kw';
+    else if (TYPES.has(tok)) cls = 'type';
+    else if (/^[A-Z][A-Z0-9_]+$/.test(tok)) cls = 'const';
+    out += cls ? `<span class="tk-${cls}">${esc(tok)}</span>` : esc(tok);
+    last = re.lastIndex;
+  }
+  return out + esc(code.slice(last));
+}
+function codeLines(src, numbers) {
+  return numbers.map(n => `<div class="ln" data-line="${n}"><span class="n">${n}</span><span class="m"></span><span class="s">${highlight(src[n - 1])}</span></div>`).join('');
+}
+function markLines(container, focus, isError) {
+  const first = Math.min(...focus);
+  container.querySelectorAll('.ln[data-line]').forEach(el => {
+    const n = Number(el.dataset.line);
+    const isFocus = focus.includes(n);
+    el.classList.toggle('is-focus', isFocus && !isError);
+    el.classList.toggle('is-error', isFocus && isError);
+    el.querySelector('.m').textContent = isFocus && n === first ? (isError ? '✕' : '▶') : '';
+  });
+}
+
+const $ = id => document.getElementById(id);
+let sim = { steps: [], entries: [], failed: false };
+let idx = 0;
+let timer = null;
+
+function load(text) {
+  stop();
+  sim = simulate(text);
+  $('scrub').max = Math.max(sim.steps.length - 1, 0);
+  idx = 0;
+  render();
+}
+
+function sameOperand(a, b) { return a.name === b.name && a.value === b.value; }
+function splitDiff(prevList, curList, same) {
+  let k = 0;
+  while (k < prevList.length && k < curList.length && same(prevList[k], curList[k])) k++;
+  return { removed: prevList.slice(k), added: curList.length - k, keep: k };
+}
+
+function renderStages(s) {
+  const cur = STAGES.findIndex(x => x.id === s.stage);
+  $('stages').innerHTML = STAGES.map((st, i) => {
+    const cls = ['stage', i < cur ? 'done' : '', i === cur ? (s.error ? 'bad' : 'now') : ''].join(' ');
+    return `<div class="${cls}"><span class="no">${st.no}</span><span class="nm">${esc(st.nm)}</span><span class="cl">${esc(st.cl)}</span></div>`;
+  }).join('');
+}
+
+function renderTape(s) {
+  const tape = $('tape');
+  if (!s.tokens) {
+    const line = sim.entries.find(e => e.lineNo === s.lineNo);
+    tape.innerHTML = `<span class="raw-line ${s.error ? '' : 'plain'}">${line ? esc(line.src) : 'no tokens yet'}</span>`;
+    return;
+  }
+  tape.innerHTML = s.tokens.map((t, i) => {
+    const cls = i < s.ti ? 'done' : i === s.ti ? (s.error ? 'bad' : 'now') : '';
+    return `<span class="tok ${cls}"><span class="t">${t.type === 'EOF' ? '⏎' : esc(t.text)}</span><span class="k">${t.type}</span></span>`;
+  }).join('');
+  const now = tape.children[Math.max(0, Math.min(s.ti, tape.children.length - 1))];
+  if (now) {
+    const left = now.offsetLeft - tape.offsetLeft;
+    if (left < tape.scrollLeft || left + now.offsetWidth > tape.scrollLeft + tape.clientWidth) tape.scrollLeft = Math.max(0, left - 40);
+  }
+}
+
+function renderFrames(s) {
+  const box = $('frames');
+  if (!s.calls.length) { box.innerHTML = '<p class="frames-empty">The program has finished: no call is running.</p>'; return; }
+  const order = s.calls.map((c, i) => i).reverse();
+  box.innerHTML = order.map((i, k) => {
+    const c = s.calls[i];
+    const top = k === 0;
+    const src = SRC[c.fn];
+    const numbers = top ? src.map((_, n) => n + 1) : [c.focus[0]];
+    const locals = c.locals.length
+      ? `<div class="locals">${c.locals.map(([n, v]) => `<span class="loc"><b>${esc(n)}</b> = ${esc(String(v))}</span>`).join('')}</div>` : '';
+    return `<div class="frame ${top ? 'is-top' : 'collapsed'}" data-i="${i}"><div class="frame-head"><span>${esc(c.label)}</span><span class="why">${esc(c.why || '')}</span></div>${locals}
+      <div class="code">${codeLines(src, numbers)}</div></div>`;
+  }).join('');
+  order.forEach((i, k) => {
+    const el = box.querySelector(`.frame[data-i="${i}"] .code`);
+    markLines(el, s.calls[i].focus, !!s.error);
+  });
+}
+
+function renderStacks(s, prev) {
+  const opd = prev ? splitDiff(prev.operands, s.operands, sameOperand) : { removed: [], added: 0, keep: s.operands.length };
+  const ops = prev ? splitDiff(prev.operators, s.operators, (a, b) => a === b) : { removed: [], added: 0, keep: s.operators.length };
+  const opdCells = s.operands.map((o, i) => {
+    const isNew = i >= opd.keep;
+    const cls = ['cell', o.name ? 'var' : 'val', isNew ? 'is-new' : '', isNew && s.applied ? 'result' : ''].join(' ');
+    const main = o.name
+      ? `<span class="nm">${esc(o.name)}</span><span class="eq">=</span>${o.value === undefined ? '<span class="unset">unset</span>' : o.value}`
+      : String(o.value);
+    const kind = o.name ? 'Variable<br>assignable' : 'Value';
+    return `<div class="${cls}"><span class="main">${main}</span><span class="kind">${kind}</span></div>`;
+  }).reverse();
+  $('operandStack').innerHTML = opdCells.length ? opdCells.join('') : '<div class="empty">empty</div>';
+  $('operandSub').innerHTML = opd.removed.length ? `<span class="popped">popped ${opd.removed.slice().reverse().map(fmt).join(', ')}</span>` : '';
+  const opCells = s.operators.map((op, i) => {
+    const isNew = i >= ops.keep;
+    if (op === 'OPEN_PAREN') {
+      return `<div class="cell paren ${isNew ? 'is-new' : ''}"><span class="main">(</span><span class="kind">wall<br><span class="mono">OPEN_PAREN</span></span></div>`;
+    }
+    return `<div class="cell ${isNew ? 'is-new' : ''}"><span class="main">${esc(OPS[op].sym)}</span><span class="kind"><span class="mono">${op}</span><br>${OPS[op].pn}</span></div>`;
+  }).reverse();
+  $('operatorStack').innerHTML = opCells.length ? opCells.join('') : '<div class="empty">empty</div>';
+  $('operatorSub').innerHTML = ops.removed.length ? `<span class="popped">popped ${ops.removed.slice().reverse().map(o => OPS[o].sym).join(', ')}</span>` : '';
+}
+
+function renderVars(s) {
+  const prevVars = idx > 0 ? sim.steps[idx - 1].vars : new Map();
+  const names = [...s.vars.keys()].sort();
+  if (!names.length) {
+    $('varTable').innerHTML = '<div class="empty">No variables yet</div>';
+  } else {
+    $('varTable').innerHTML = `<table><thead><tr><th>Name</th><th>Value</th><th></th></tr></thead><tbody>${
+      names.map(n => {
+        const changed = s.changed === n;
+        const was = changed ? (prevVars.has(n) ? `was ${prevVars.get(n)}` : 'new') : '';
+        return `<tr class="${changed ? 'changed' : ''}"><td class="mono">${esc(n)}</td><td class="v">${s.vars.get(n)}</td><td class="was">${was}</td></tr>`;
+      }).join('')}</tbody></table>`;
+  }
+  $('output').innerHTML = `The program would print: <code>${esc(formatVars(s.vars))}</code>`;
+}
+
+function renderIo(s) {
+  const lines = sim.inputLines;
+  $('stdin').innerHTML = lines.map((l, i) => {
+    const n = i + 1;
+    const started = s.lineNo >= n && s.stage !== 'input';
+    const cur = s.lineNo === n && ['lines', 'lex', 'eval'].includes(s.stage);
+    const past = started && !cur;
+    const st = cur ? 'running' : past ? 'read' : '';
+    return `<li class="${cur ? 'cur' : ''} ${past ? 'past' : ''}"><span class="no">${n}</span><span>${l.trim() ? esc(l) : '<em>(blank)</em>'}</span><span class="st">${st}</span></li>`;
+  }).join('');
+  const out = $('stdout');
+  if (s.io.stdout !== null) out.innerHTML = `${esc(s.io.stdout)}<span class="exit">${s.io.exit === 0 ? 'exit status 0' : ''}</span>`;
+  else if (s.io.building) out.innerHTML = `<span class="ghost">${esc(s.io.building)} … being built by StringJoiner, not printed yet</span>`;
+  else out.innerHTML = '<span class="ghost">nothing printed yet</span>';
+  out.classList.toggle('is-new', s.io.stdout !== null && idx > 0 && sim.steps[idx - 1].io.stdout === null);
+  const err = $('stderr');
+  err.innerHTML = s.io.stderr !== null ? `${esc(s.io.stderr)}<span class="exit">${s.io.exit === 1 ? 'exit status 1' : ''}</span>` : '<span class="ghost">empty</span>';
+}
+
+function renderMachine(s) {
+  const live = s.stage === 'eval';
+  $('s-value').classList.toggle('on', live && s.expecting);
+  $('s-operator').classList.toggle('on', live && !s.expecting);
+  ['toOperator', 'toValue', 'stayValue', 'stayOperator', 'eof'].forEach(e => {
+    const on = live && s.edge === e;
+    $('e-' + e).classList.toggle('on', on);
+    $('e-' + e).setAttribute('marker-end', on ? 'url(#mkOn)' : 'url(#mk)');
+    $('l-' + e).classList.toggle('on', on);
+  });
+  $('t-eof').classList.toggle('on', live && s.edge === 'eof');
+  $('pillValue').classList.toggle('is-on', live && s.expecting);
+  $('pillOp').classList.toggle('is-on', live && !s.expecting);
+}
+
+function renderLines() {
+  const list = $('lineList');
+  const started = sim.entries.filter(e => e.start >= 0);
+  const cur = sim.steps[idx];
+  list.innerHTML = sim.entries.map((e, k) => {
+    const end = k + 1 < sim.entries.length ? sim.entries[k + 1].start : sim.steps.length;
+    const isCurrent = cur && idx >= e.start && idx < end && cur.lineNo === e.lineNo && ['lines', 'lex', 'eval'].includes(cur.stage) || (cur && cur.lineNo === e.lineNo && cur.error);
+    const errored = sim.failed && k === sim.entries.length - 1 && sim.steps.some(x => x.error && x.lineNo === e.lineNo);
+    let status = idx >= end ? 'done' : isCurrent ? 'running' : idx < e.start ? 'next' : 'done';
+    if (errored && cur && cur.error && cur.lineNo === e.lineNo) status = 'error';
+    const cls = ['line-btn', isCurrent ? 'is-current' : '', status === 'error' ? 'is-error' : ''].join(' ');
+    return `<li><button class="${cls}" type="button" data-step="${e.start}"><span class="no">${e.lineNo}</span><code>${esc(e.src.trim())}</code><span class="status">${status}</span></button></li>`;
+  }).join('');
+}
+
+function render() {
+  const steps = sim.steps;
+  renderLines();
+  if (!steps.length) {
+    $('counter').textContent = 'No steps';
+    ['first', 'prev', 'next', 'play'].forEach(id => { $(id).disabled = true; });
+    return;
+  }
+  const s = steps[idx];
+  const prev = idx > 0 && steps[idx - 1].lineNo === s.lineNo ? steps[idx - 1] : null;
+  $('counter').textContent = `Step ${idx + 1} / ${steps.length}` + (s.lineNo ? ` · line ${s.lineNo}` : '');
+  $('scrub').value = idx;
+  $('first').disabled = $('prev').disabled = idx === 0;
+  $('next').disabled = idx === steps.length - 1;
+  $('play').disabled = false;
+
+  renderStages(s);
+  renderTape(s);
+  $('crumbs').innerHTML = s.calls.length
+    ? s.calls.map((c, i) => `<span class="f ${i === s.calls.length - 1 ? 'last' : ''}">${esc(c.label)}</span>`).join('<span>›</span>')
+    : '<span class="f">exited</span>';
+  $('stepTitle').textContent = s.title;
+  $('stepText').textContent = s.text;
+  $('stepError').hidden = !s.error;
+  $('stepError').textContent = s.error ? `CalculatorException: ${s.error}` : '';
+  $('narration').classList.toggle('is-error', !!s.error);
+
+  renderFrames(s);
+  renderIo(s);
+  renderStacks(s, prev);
+  renderVars(s);
+  renderMachine(s);
+}
+
+function keyOnly() { return $('detail').value === 'key'; }
+function target(dir) {
+  const n = sim.steps.length;
+  let i = idx + dir;
+  if (keyOnly()) while (i >= 0 && i < n && sim.steps[i].minor) i += dir;
+  return Math.max(0, Math.min(n - 1, i));
+}
+function go(i) {
+  if (!sim.steps.length) return;
+  idx = Math.max(0, Math.min(sim.steps.length - 1, i));
+  render();
+}
+function stop() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  $('play').textContent = '▶ Play';
+}
+function play() {
+  if (timer) { stop(); return; }
+  if (idx >= sim.steps.length - 1) idx = 0;
+  $('play').textContent = '❚❚ Pause';
+  render();
+  timer = setInterval(() => {
+    if (idx >= sim.steps.length - 1) { stop(); return; }
+    go(target(1));
+  }, Number($('speed').value));
+}
+
+$('first').addEventListener('click', () => { stop(); go(0); });
+$('prev').addEventListener('click', () => { stop(); go(target(-1)); });
+$('next').addEventListener('click', () => { stop(); go(target(1)); });
+$('play').addEventListener('click', play);
+$('scrub').addEventListener('input', e => { stop(); go(Number(e.target.value)); });
+$('speed').addEventListener('change', () => { if (timer) { stop(); play(); } });
+$('lineList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-step]');
+  if (b) { stop(); go(Number(b.dataset.step)); }
+});
+document.addEventListener('keydown', e => {
+  if (e.target.closest('textarea, input, select')) return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); stop(); go(target(1)); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); stop(); go(target(-1)); }
+  else if (e.key === ' ' && !e.target.closest('button')) { e.preventDefault(); play(); }
+});
+
+const presetEl = $('preset');
+presetEl.innerHTML = PRESETS.map((p, i) => `<option value="${i}">${esc(p.label)}</option>`).join('')
+  + '<option value="custom" hidden>Your program</option>';
+const programEl = $('program');
+presetEl.addEventListener('change', () => {
+  const p = PRESETS[Number(presetEl.value)];
+  if (!p) return;
+  programEl.value = p.text;
+  load(p.text);
+});
+let debounce = null;
+programEl.addEventListener('input', () => {
+  presetEl.value = 'custom';
+  clearTimeout(debounce);
+  debounce = setTimeout(() => load(programEl.value), 350);
+});
+
+programEl.value = PRESETS[0].text;
+load(PRESETS[0].text);
+</script>
+
+</body></html>
